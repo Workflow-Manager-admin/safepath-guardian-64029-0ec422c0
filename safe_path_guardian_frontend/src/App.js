@@ -104,17 +104,52 @@ function useCrimeData() {
   }, []);
   return data;
 }
-function useWeatherData() {
+/**
+ * PUBLIC_INTERFACE
+ * Hook to fetch live weather for given coordinates (India).
+ * Falls back to previous stub if coords is empty.
+ * Uses OpenWeatherMap's current weather API.
+ */
+function useWeatherData(coords) {
   const [weather, setWeather] = useState(null);
+
   useEffect(() => {
-    setTimeout(() => {
-      setWeather({
-        icon: "☁️",
-        desc: "Cloudy, 71°F",
-        alerts: [],
-      });
-    }, 200);
-  }, []);
+    if (!coords || !coords.lat || !coords.lng) {
+      setWeather(null);
+      return;
+    }
+    const controller = new AbortController();
+    const signal = controller.signal;
+    // Replace with real OpenWeatherMap API key for production
+    const API_KEY = "285568c9e57ca0da76e2fe74bb901764";
+    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${coords.lat}&lon=${coords.lng}&units=metric&appid=${API_KEY}`;
+    fetch(url, { signal })
+      .then(r => r.json())
+      .then(d => {
+        if (!d || !d.weather || !d.weather[0]) throw new Error("No weather");
+        const iconMap = {
+          Thunderstorm: "⛈️",
+          Drizzle: "🌧️",
+          Rain: "🌧️",
+          Snow: "❄️",
+          Mist: "🌫️", Smoke: "🌫️", Haze: "🌫️", Dust: "🌫️", Fog: "🌫️",
+          Sand: "🌫️", Ash: "🌫️", Squall: "🌪️", Tornado: "🌪️",
+          Clear: "☀️",
+          Clouds: "☁️"
+        };
+        const w = d.weather[0];
+        setWeather({
+          icon: iconMap[w.main] || "🌡",
+          desc: `${w.description[0].toUpperCase() + w.description.slice(1)}, ${Math.round(d.main.temp)}°C (${Math.round(d.main.temp * 9/5 + 32)}°F)`,
+          alerts: d.alerts || [],
+          raw: d
+        });
+      })
+      .catch(() => setWeather({
+        icon: "❓", desc: "Weather unavailable", alerts: []
+      }));
+    return () => controller.abort();
+  }, [coords]);
   return weather;
 }
 
@@ -164,53 +199,55 @@ function App() {
 
 // Real-time Route Guidance Component (with data visualization stub)
 // Integrates: Route Calculation API, Crime Data, Weather Data
-function RouteGuidance({ crimeDataHook, weatherHook }) {
-  const crimeData = crimeDataHook();
-  const weather = weatherHook();
+function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("Detecting...");
+  const [mapLoaded, setMapLoaded] = useState(false);
   const [route, setRoute] = useState(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [calcState, setCalcState] = useState({ loading: false, error: null });
 
-  // For Google Maps and weather overlay
-  const [userLocation, setUserLocation] = useState(null);
-  const [mapLoaded, setMapLoaded] = useState(false);
+  // ----- Crime data stays the same
+  const crimeData = crimeDataHook();
 
-  // PUBLIC_INTERFACE
-  // Call backend API for the safest route - stubbed for now
-  function calculateRoute(e) {
-    e && e.preventDefault();
-    setCalcState({ loading: true, error: null });
-    setTimeout(() => {
-      if (start && end) {
-        setRoute({
-          path: [start, "Main St", "5th Ave", end],
-          advisories: ["Avoid 5th Ave after 9pm due to recent incident"],
-          // For demo purposes: add mocked coordinates representing the route.
-          coords: [
-            userLocation ? userLocation : { lat: 40.75, lng: -73.99 },
-            { lat: 40.755, lng: -73.98 }, // Mock points
-            { lat: 40.76, lng: -73.97 },
-            { lat: 40.765, lng: -73.96 }
-          ]
-        });
-        setCalcState({ loading: false, error: null });
-      } else {
-        setCalcState({ loading: false, error: "Please enter start and end." });
-      }
-    }, 600);
+  // ----- Geolocation logic
+  // Helper: returns true if coordinates are in India.
+  function isInIndia(lat, lng) {
+    // India's bounding box: lat 6.7 - 35.7, lng 68.0 - 97.25 (approximate)
+    return lat >= 6.7 && lat <= 35.7 && lng >= 68.0 && lng <= 97.25;
   }
+  // Default fallback: center of India (Nagpur-ish)
+  const indiaDefault = { lat: 21.146633, lng: 79.088860 };
 
-  // Get user's geolocation on mount
   useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => setUserLocation({ lat: 40.75, lng: -73.99 }) // Default: Manhattan if denied or unavailable
-      );
-    } else {
-      setUserLocation({ lat: 40.75, lng: -73.99 });
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("Geolocation not supported—showing India default.");
+      setUserLocation(indiaDefault);
+      return;
     }
+    setLocationStatus("Requesting your location…");
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        // If not in India, fallback to India center!
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if (!isInIndia(lat, lng)) {
+          setLocationStatus("Detected location outside India; centering on India.");
+          setUserLocation(indiaDefault);
+        } else {
+          setLocationStatus("");
+          setUserLocation({ lat, lng });
+        }
+      },
+      () => {
+        setLocationStatus("Unable to get your location—showing India default.");
+        setUserLocation(indiaDefault);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  // Only run on mount
+  // eslint-disable-next-line
   }, []);
 
   // Load Google Maps JS script only once
@@ -219,7 +256,7 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
       const script = document.createElement("script");
       script.id = "gmaps-script";
       script.src =
-        "https://maps.googleapis.com/maps/api/js?key=AIzaSyDgsj2lZ2ZY1rDpF3H_bNk-sT11T0wihfY&libraries=visualization"; // Inserted actual Google Maps API key
+        "https://maps.googleapis.com/maps/api/js?key=AIzaSyDgsj2lZ2ZY1rDpF3H_bNk-sT11T0wihfY&libraries=visualization";
       script.async = true;
       script.defer = true;
       script.onload = () => setMapLoaded(true);
@@ -229,9 +266,13 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
     }
   }, []);
 
-  // Render the Google Map + Weather Overlay + Polyline for route
+  // --- Fetch weather data at user's lat/lng ---
+  const weather = useWeatherData(userLocation || indiaDefault);
+
+  // --- Render the Google Map, overlays etc ---
   function MapDisplay() {
     const mapRef = React.useRef(null);
+
     useEffect(() => {
       if (!mapLoaded || !userLocation || !window.google) return;
 
@@ -240,33 +281,53 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         center: userLocation,
         zoom: 14,
         mapTypeControl: false,
-        streetViewControl: false
+        streetViewControl: false,
       });
 
-      // Add weather overlay from OpenWeatherMap
-      // See: https://openweathermap.org/api/weathermaps
+      // Add weather overlay tiles (clouds, precipitation etc)
       const weatherTile = new window.google.maps.ImageMapType({
-        getTileUrl: function(coord, zoom) {
-          // See: https://tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png?appid={API key}
-          // For demonstration, we'll use the 'clouds_new' layer
+        getTileUrl: function (coord, zoom) {
+          // For demo: show clouds and precipitation overlays (optimal for India)
+          // You could swap for 'precipitation_new' to visualize rainfall/lighnting.
           return `https://tile.openweathermap.org/map/clouds_new/${zoom}/${coord.x}/${coord.y}.png?appid=285568c9e57ca0da76e2fe74bb901764`;
         },
         tileSize: new window.google.maps.Size(256, 256),
-        name: "Weather",
+        name: "Weather overlay",
         maxZoom: 19,
         opacity: 0.5,
       });
       map.overlayMapTypes.insertAt(0, weatherTile);
 
-      // Place marker at user location
+      // Place user marker
       new window.google.maps.Marker({
         position: userLocation,
         map,
-        title: "You are here",
+        title: "Your current location",
         icon: {
           url: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
         },
       });
+
+      // Optionally: Place weather marker/info
+      if (weather && weather.icon) {
+        // Show weather icon/info near user marker
+        const infoWindow = new window.google.maps.InfoWindow({
+          content: `<div style="font-family:Arial,sans-serif;font-size:1.1rem;">
+            <span style="font-size:1.7em; margin-right:0.5em; vertical-align:middle;">${weather.icon}</span>
+            <span style="font-size:1.05em;">${weather.desc}</span>
+          </div>`
+        });
+        infoWindow.open(map, new window.google.maps.Marker({
+          position: userLocation,
+          map,
+          title: "Current Weather",
+          icon: {
+            url: "https://openweathermap.org/img/wn/01d.png", // Neutral sunny marker
+            scaledSize: new window.google.maps.Size(1, 1), // Hidden fallback, only info window visible
+          },
+          opacity: 0,
+        }));
+      }
 
       // Draw polyline for route if available
       if (route && route.coords && route.coords.length > 1) {
@@ -279,7 +340,7 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
           map,
         });
       }
-    }, [mapLoaded, userLocation, route]);
+    }, [mapLoaded, userLocation, route, weather]);
 
     // Sizing: 100% width, height capped at 360px
     return (
@@ -298,6 +359,30 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         id="google-map"
       />
     );
+  }
+
+  // --- Route Calculation logic (remains similar) ---
+  function calculateRoute(e) {
+    e && e.preventDefault();
+    setCalcState({ loading: true, error: null });
+    setTimeout(() => {
+      if (start && end) {
+        setRoute({
+          path: [start, "Main St", "5th Ave", end],
+          advisories: ["Avoid 5th Ave after 9pm due to recent incident"],
+          // Use current coords as start point of route (for demo)
+          coords: [
+            userLocation ? userLocation : indiaDefault,
+            { lat: (userLocation ? userLocation.lat : indiaDefault.lat) + 0.005, lng: (userLocation ? userLocation.lng : indiaDefault.lng) + 0.01 }, // Demo points
+            { lat: (userLocation ? userLocation.lat : indiaDefault.lat) + 0.01, lng: (userLocation ? userLocation.lng : indiaDefault.lng) + 0.02 },
+            { lat: (userLocation ? userLocation.lat : indiaDefault.lat) + 0.015, lng: (userLocation ? userLocation.lng : indiaDefault.lng) + 0.03 }
+          ]
+        });
+        setCalcState({ loading: false, error: null });
+      } else {
+        setCalcState({ loading: false, error: "Please enter start and end." });
+      }
+    }, 600);
   }
 
   return (
@@ -355,15 +440,15 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
           ))}
         </div>
       )}
-      {!userLocation && <div style={{ color: "#999", marginTop: 8 }}>Loading your location & map...</div>}
+      {(!userLocation || locationStatus) && <div style={{ color: "#999", marginTop: 8 }}>{locationStatus || "Loading your location & map..."}</div>}
       {userLocation && mapLoaded && !window.google && (
         <div style={{ color: "#b44" }}>Error loading Google Maps. Please check your connection or API key.</div>
       )}
       <div style={{ fontSize: 11, marginTop: 8, color: "#888" }}>
-        Map and weather overlay powered by Google Maps and OpenWeatherMap.
+        Map and weather overlays use your current geolocation (centered in India if unavailable).
       </div>
       <div style={{ fontSize: 10, color: "#b77", marginTop: 2 }}>
-        {/* Google Maps API key in use for this deployment. For OpenWeatherMap overlays, add your OpenWeatherMap API key. */}
+        {/* Google Maps API key in use for this deployment. Weather overlays and panel update via OpenWeatherMap using detected coordinates. */}
       </div>
     </div>
   );
