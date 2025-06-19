@@ -207,59 +207,72 @@ function App() {
 // Real-time Route Guidance Component (with data visualization stub)
 // Integrates: Route Calculation API, Crime Data, Weather Data
 function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
-  const [userLocation, setUserLocation] = useState(null);
+  const [userLocation, setUserLocation] = useState(null); // user's geolocation (if permitted/success)
   const [locationStatus, setLocationStatus] = useState("Detecting...");
+  const [locationResolved, setLocationResolved] = useState(false); // for strict loading fallback logic
   const [mapLoaded, setMapLoaded] = useState(false);
   const [route, setRoute] = useState(null);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [calcState, setCalcState] = useState({ loading: false, error: null });
 
-  // ----- Crime data stays the same
+  // Crime data
   const crimeData = crimeDataHook();
 
-  // ----- Geolocation logic
-  // Helper: returns true if coordinates are in India.
+  // India's bounding box: lat/lng within India
   function isInIndia(lat, lng) {
-    // India's bounding box: lat 6.7 - 35.7, lng 68.0 - 97.25 (approximate)
     return lat >= 6.7 && lat <= 35.7 && lng >= 68.0 && lng <= 97.25;
   }
-  // Default fallback: center of India (Nagpur-ish)
+  // Strict fallback: center of India (Nagpur-ish)
   const indiaDefault = { lat: 21.146633, lng: 79.088860 };
 
+  // PUBLIC_INTERFACE
+  // On mount: strictly try geolocation, and only fallback to default if denied or failed
   useEffect(() => {
-    if (!("geolocation" in navigator)) {
-      setLocationStatus("Geolocation not supported—showing India default.");
-      setUserLocation(indiaDefault);
-      return;
-    }
-    setLocationStatus("Requesting your location…");
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        // If not in India, fallback to India center!
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        if (!isInIndia(lat, lng)) {
-          setLocationStatus("Detected location outside India; centering on India.");
-          setUserLocation(indiaDefault);
-        } else {
-          setLocationStatus("");
-          setUserLocation({ lat, lng });
-        }
-      },
-      () => {
-        setLocationStatus("Unable to get your location—showing India default.");
+    let didCancel = false;
+    async function resolveGeolocation() {
+      if (!("geolocation" in navigator)) {
+        setLocationStatus("Geolocation not supported—using default location.");
         setUserLocation(indiaDefault);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  // Only run on mount
-  // eslint-disable-next-line
+        setLocationResolved(true);
+        return;
+      }
+      setLocationStatus("Requesting your location…");
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          if (didCancel) return;
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          if (!isInIndia(lat, lng)) {
+            setLocationStatus("Detected location outside India; using default.");
+            setUserLocation(indiaDefault);
+          } else {
+            setLocationStatus("");
+            setUserLocation({ lat, lng });
+          }
+          setLocationResolved(true);
+        },
+        err => {
+          if (didCancel) return;
+          // Geolocation denied or failed
+          if (err && err.code === 1) {
+            setLocationStatus("Permission denied—using default location.");
+          } else {
+            setLocationStatus("Unable to get your location—using default.");
+          }
+          setUserLocation(indiaDefault);
+          setLocationResolved(true);
+        },
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+      );
+    }
+    resolveGeolocation();
+    return () => { didCancel = true; };
+    // eslint-disable-next-line
   }, []);
 
-  // --- Setup OpenStreetMap/Leaflet asynchronously (do once, mark as loaded) ---
+  // Setup OpenStreetMap/Leaflet CSS and ready flag
   useEffect(() => {
-    // For styling (Leaflet CSS) - add only if not present
     if (!document.getElementById("leaflet-css")) {
       const link = document.createElement("link");
       link.rel = "stylesheet";
@@ -270,7 +283,7 @@ function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
     setMapLoaded(true);
   }, []);
 
-  // --- Fetch weather data at user's lat/lng ---
+  // Use weather for user's actual location if available, otherwise fallback
   const weather = useWeatherData(userLocation || indiaDefault);
 
   // --- Render the OpenStreetMap (Leaflet), overlays etc ---
