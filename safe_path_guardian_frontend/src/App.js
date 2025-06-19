@@ -227,18 +227,13 @@ function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
   const indiaDefault = { lat: 21.146633, lng: 79.088860 };
 
   // PUBLIC_INTERFACE
-  // On mount: strictly try geolocation, and only fallback to default if denied or failed
+  // On mount: always request the browser geolocation for accurate centering
   useEffect(() => {
     let didCancel = false;
-    async function resolveGeolocation() {
-      if (!("geolocation" in navigator)) {
-        setLocationStatus("Geolocation not supported—using default location.");
-        setUserLocation(indiaDefault);
-        setLocationResolved(true);
-        return;
-      }
+    // Try navigator.geolocation on every load
+    if ("geolocation" in window.navigator) {
       setLocationStatus("Requesting your location…");
-      navigator.geolocation.getCurrentPosition(
+      window.navigator.geolocation.getCurrentPosition(
         pos => {
           if (didCancel) return;
           const lat = pos.coords.latitude;
@@ -265,8 +260,12 @@ function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
         },
         { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
       );
+    } else {
+      // geolocation not supported
+      setLocationStatus("Geolocation not supported—using default location.");
+      setUserLocation(indiaDefault);
+      setLocationResolved(true);
     }
-    resolveGeolocation();
     return () => { didCancel = true; };
     // eslint-disable-next-line
   }, []);
