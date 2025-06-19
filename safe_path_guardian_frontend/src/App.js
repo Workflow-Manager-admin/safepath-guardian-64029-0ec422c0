@@ -172,8 +172,12 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
   const [end, setEnd] = useState("");
   const [calcState, setCalcState] = useState({ loading: false, error: null });
 
+  // For Google Maps and weather overlay
+  const [userLocation, setUserLocation] = useState(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+
   // PUBLIC_INTERFACE
-  // Stub: Call to backend API for best/safest route based on start/end (normally async to Route Calculation API)
+  // Call backend API for the safest route - stubbed for now
   function calculateRoute(e) {
     e && e.preventDefault();
     setCalcState({ loading: true, error: null });
@@ -182,12 +186,118 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         setRoute({
           path: [start, "Main St", "5th Ave", end],
           advisories: ["Avoid 5th Ave after 9pm due to recent incident"],
+          // For demo purposes: add mocked coordinates representing the route.
+          coords: [
+            userLocation ? userLocation : { lat: 40.75, lng: -73.99 },
+            { lat: 40.755, lng: -73.98 }, // Mock points
+            { lat: 40.76, lng: -73.97 },
+            { lat: 40.765, lng: -73.96 }
+          ]
         });
         setCalcState({ loading: false, error: null });
       } else {
         setCalcState({ loading: false, error: "Please enter start and end." });
       }
     }, 600);
+  }
+
+  // Get user's geolocation on mount
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => setUserLocation({ lat: 40.75, lng: -73.99 }) // Default: Manhattan if denied or unavailable
+      );
+    } else {
+      setUserLocation({ lat: 40.75, lng: -73.99 });
+    }
+  }, []);
+
+  // Load Google Maps JS script only once
+  useEffect(() => {
+    if (!window.google && !document.getElementById("gmaps-script")) {
+      const script = document.createElement("script");
+      script.id = "gmaps-script";
+      script.src =
+        "https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=visualization"; // Insert your Google Maps API key here
+      script.async = true;
+      script.defer = true;
+      script.onload = () => setMapLoaded(true);
+      document.body.appendChild(script);
+    } else if (window.google) {
+      setMapLoaded(true);
+    }
+  }, []);
+
+  // Render the Google Map + Weather Overlay + Polyline for route
+  function MapDisplay() {
+    const mapRef = React.useRef(null);
+    useEffect(() => {
+      if (!mapLoaded || !userLocation || !window.google) return;
+
+      // Create the map:
+      const map = new window.google.maps.Map(mapRef.current, {
+        center: userLocation,
+        zoom: 14,
+        mapTypeControl: false,
+        streetViewControl: false
+      });
+
+      // Add weather overlay from OpenWeatherMap
+      // See: https://openweathermap.org/api/weathermaps
+      const weatherTile = new window.google.maps.ImageMapType({
+        getTileUrl: function(coord, zoom) {
+          // See: https://tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png?appid={API key}
+          // For demonstration, we'll use the 'clouds_new' layer
+          return `https://tile.openweathermap.org/map/clouds_new/${zoom}/${coord.x}/${coord.y}.png?appid=YOUR_OPENWEATHERMAP_API_KEY`;
+        },
+        tileSize: new window.google.maps.Size(256, 256),
+        name: "Weather",
+        maxZoom: 19,
+        opacity: 0.5,
+      });
+      map.overlayMapTypes.insertAt(0, weatherTile);
+
+      // Place marker at user location
+      new window.google.maps.Marker({
+        position: userLocation,
+        map,
+        title: "You are here",
+        icon: {
+          url: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+        },
+      });
+
+      // Draw polyline for route if available
+      if (route && route.coords && route.coords.length > 1) {
+        new window.google.maps.Polyline({
+          path: route.coords,
+          geodesic: true,
+          strokeColor: "#4CAF50",
+          strokeOpacity: 0.8,
+          strokeWeight: 5,
+          map,
+        });
+      }
+    }, [mapLoaded, userLocation, route]);
+
+    // Sizing: 100% width, height capped at 360px
+    return (
+      <div
+        ref={mapRef}
+        style={{
+          margin: "20px auto",
+          border: "2px solid #4CAF5075",
+          borderRadius: 10,
+          width: "100%",
+          maxWidth: 750,
+          minHeight: 280,
+          height: 360,
+          boxShadow: "0 5px 23px #0b3c8c19"
+        }}
+        id="google-map"
+      />
+    );
   }
 
   return (
@@ -227,6 +337,11 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         </button>
       </form>
       {calcState.error && <div style={{ color: ACCENT, marginBottom: 6 }}>{calcState.error}</div>}
+      {userLocation && (
+        <div style={{ margin: "0 auto", marginTop: 12, marginBottom: 20 }}>
+          <MapDisplay />
+        </div>
+      )}
       {route && (
         <div style={{ border: `1.5px solid ${SECONDARY}`, borderRadius: 10, padding: 18, background: "#FFFEE8" }}>
           <h4 style={{ margin: 0, color: ACCENT }}>Recommended Route:</h4>
@@ -240,6 +355,16 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
           ))}
         </div>
       )}
+      {!userLocation && <div style={{ color: "#999", marginTop: 8 }}>Loading your location & map...</div>}
+      {userLocation && mapLoaded && !window.google && (
+        <div style={{ color: "#b44" }}>Error loading Google Maps. Please check your connection or API key.</div>
+      )}
+      <div style={{ fontSize: 11, marginTop: 8, color: "#888" }}>
+        Map and weather overlay powered by Google Maps and OpenWeatherMap.
+      </div>
+      <div style={{ fontSize: 10, color: "#b77", marginTop: 2 }}>
+        {/* Replace "YOUR_GOOGLE_MAPS_API_KEY" and "YOUR_OPENWEATHERMAP_API_KEY" with your actual API keys for deployment. */}
+      </div>
     </div>
   );
 }
