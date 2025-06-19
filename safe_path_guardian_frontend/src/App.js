@@ -219,7 +219,7 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
       const script = document.createElement("script");
       script.id = "gmaps-script";
       script.src =
-        "https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=visualization"; // Insert your Google Maps API key here
+        "https://maps.googleapis.com/maps/api/js?key=AIzaSyDgsj2lZ2ZY1rDpF3H_bNk-sT11T0wihfY&libraries=visualization"; // Inserted actual Google Maps API key
       script.async = true;
       script.defer = true;
       script.onload = () => setMapLoaded(true);
@@ -363,7 +363,7 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         Map and weather overlay powered by Google Maps and OpenWeatherMap.
       </div>
       <div style={{ fontSize: 10, color: "#b77", marginTop: 2 }}>
-        {/* Replace "YOUR_GOOGLE_MAPS_API_KEY" and "YOUR_OPENWEATHERMAP_API_KEY" with your actual API keys for deployment. */}
+        {/* Google Maps API key in use for this deployment. For OpenWeatherMap overlays, add your OpenWeatherMap API key. */}
       </div>
     </div>
   );
