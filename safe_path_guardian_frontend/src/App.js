@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 
+// For static analysis: import leaflet and react-leaflet (map code uses dynamic import for MapContainer)
+import "leaflet/dist/leaflet.css";
+/* eslint-disable-next-line */
+import * as leaflet from "leaflet";
+/* eslint-disable-next-line */
+import * as reactLeaflet from "react-leaflet";
+
 /**
  * MAIN CONTAINER FOR SAFEPATH GUARDIAN
  * Provides navigation, layout, and integrates feature stubs:
@@ -250,114 +257,126 @@ function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
   // eslint-disable-next-line
   }, []);
 
-  // Load Google Maps JS script only once
+  // --- Setup OpenStreetMap/Leaflet asynchronously (do once, mark as loaded) ---
   useEffect(() => {
-    if (!window.google && !document.getElementById("gmaps-script")) {
-      const script = document.createElement("script");
-      script.id = "gmaps-script";
-      script.src =
-        "https://maps.googleapis.com/maps/api/js?key=AIzaSyDgsj2lZ2ZY1rDpF3H_bNk-sT11T0wihfY&libraries=visualization";
-      script.async = true;
-      script.defer = true;
-      script.onload = () => setMapLoaded(true);
-      document.body.appendChild(script);
-    } else if (window.google) {
-      setMapLoaded(true);
+    // For styling (Leaflet CSS) - add only if not present
+    if (!document.getElementById("leaflet-css")) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.id = "leaflet-css";
+      link.href = "https://unpkg.com/leaflet/dist/leaflet.css";
+      document.head.appendChild(link);
     }
+    setMapLoaded(true);
   }, []);
 
   // --- Fetch weather data at user's lat/lng ---
   const weather = useWeatherData(userLocation || indiaDefault);
 
-  // --- Render the Google Map, overlays etc ---
+  // --- Render the OpenStreetMap (Leaflet), overlays etc ---
+  // Code-split import for react-leaflet+leaflet due to SSR/DOM/CSS requirements. See MapDisplay below.
   function MapDisplay() {
-    const mapRef = React.useRef(null);
+    // Use minimal dynamic import for react-leaflet since Leaflet needs DOM
+    const [LModules, setLModules] = React.useState(null);
 
     useEffect(() => {
-      if (!mapLoaded || !userLocation || !window.google) return;
-
-      // Create the map:
-      const map = new window.google.maps.Map(mapRef.current, {
-        center: userLocation,
-        zoom: 14,
-        mapTypeControl: false,
-        streetViewControl: false,
-      });
-
-      // Add weather overlay tiles (clouds, precipitation etc)
-      const weatherTile = new window.google.maps.ImageMapType({
-        getTileUrl: function (coord, zoom) {
-          // For demo: show clouds and precipitation overlays (optimal for India)
-          // You could swap for 'precipitation_new' to visualize rainfall/lighnting.
-          return `https://tile.openweathermap.org/map/clouds_new/${zoom}/${coord.x}/${coord.y}.png?appid=285568c9e57ca0da76e2fe74bb901764`;
-        },
-        tileSize: new window.google.maps.Size(256, 256),
-        name: "Weather overlay",
-        maxZoom: 19,
-        opacity: 0.5,
-      });
-      map.overlayMapTypes.insertAt(0, weatherTile);
-
-      // Place user marker
-      new window.google.maps.Marker({
-        position: userLocation,
-        map,
-        title: "Your current location",
-        icon: {
-          url: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-        },
-      });
-
-      // Optionally: Place weather marker/info
-      if (weather && weather.icon) {
-        // Show weather icon/info near user marker
-        const infoWindow = new window.google.maps.InfoWindow({
-          content: `<div style="font-family:Arial,sans-serif;font-size:1.1rem;">
-            <span style="font-size:1.7em; margin-right:0.5em; vertical-align:middle;">${weather.icon}</span>
-            <span style="font-size:1.05em;">${weather.desc}</span>
-          </div>`
-        });
-        infoWindow.open(map, new window.google.maps.Marker({
-          position: userLocation,
-          map,
-          title: "Current Weather",
-          icon: {
-            url: "https://openweathermap.org/img/wn/01d.png", // Neutral sunny marker
-            scaledSize: new window.google.maps.Size(1, 1), // Hidden fallback, only info window visible
-          },
-          opacity: 0,
-        }));
+      let cancelled = false;
+      async function importLeaflet() {
+        const [
+          { MapContainer, TileLayer, Marker, Popup, Polyline, LayersControl, useMap },
+          L
+        ] = await Promise.all([
+          import("react-leaflet"),
+          import("leaflet")
+        ]);
+        if (!cancelled) setLModules({ MapContainer, TileLayer, Marker, Popup, Polyline, LayersControl, L });
       }
+      if (!LModules && mapLoaded) importLeaflet();
+      return () => { cancelled = true; };
+      // eslint-disable-next-line
+    }, [mapLoaded]);
 
-      // Draw polyline for route if available
-      if (route && route.coords && route.coords.length > 1) {
-        new window.google.maps.Polyline({
-          path: route.coords,
-          geodesic: true,
-          strokeColor: "#4CAF50",
-          strokeOpacity: 0.8,
-          strokeWeight: 5,
-          map,
-        });
-      }
-    }, [mapLoaded, userLocation, route, weather]);
+    if (!LModules || !userLocation) {
+      return (
+        <div
+          className="leaflet-container"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: 360,
+            background: "#f3f8fd"
+          }}
+        >
+          <span>Loading map...</span>
+        </div>
+      );
+    }
 
-    // Sizing: 100% width, height capped at 360px
+    const { MapContainer, TileLayer, Marker, Popup, Polyline, LayersControl, L } = LModules;
+    // Required: fix for default leaflet icons (blue marker)
+    delete L.Icon.Default.prototype._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+      iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+      shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+    });
+    // Controls for OSM and OWM
+    const weatherTileType = "clouds_new"; // could be: clouds_new, precipitation_new, temp_new, wind_new
+    const WEATHER_API_KEY = "285568c9e57ca0da76e2fe74bb901764";
+
+    // Helper for weather popup
+    function WeatherTooltip() {
+      return weather && weather.icon ? (
+        <div className="map-weather-tooltip">
+          <span style={{ fontSize: "1.6em", marginRight: 4, verticalAlign: "middle" }}>{weather.icon}</span>
+          <span style={{ fontSize: "1.03em" }}>{weather.desc}</span>
+        </div>
+      ) : null;
+    }
+
+    // Convert route.coords (if present) to Leaflet polyline format
+    const routePolyline = route && route.coords && route.coords.length > 1
+      ? route.coords.map(c => [c.lat, c.lng])
+      : null;
+
     return (
-      <div
-        ref={mapRef}
-        style={{
-          margin: "20px auto",
-          border: "2px solid #4CAF5075",
-          borderRadius: 10,
-          width: "100%",
-          maxWidth: 750,
-          minHeight: 280,
-          height: 360,
-          boxShadow: "0 5px 23px #0b3c8c19"
-        }}
-        id="google-map"
-      />
+      <MapContainer
+        center={[userLocation.lat, userLocation.lng]}
+        zoom={14}
+        style={{ height: 360, width: "100%", maxWidth: 750 }}
+        scrollWheelZoom
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://osm.org">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {/* OWM Weather Tiles Overlay */}
+        <TileLayer
+          attribution='Weather data &copy; <a href="https://openweathermap.org/">OpenWeatherMap</a>'
+          url={`https://tile.openweathermap.org/map/${weatherTileType}/{z}/{x}/{y}.png?appid=${WEATHER_API_KEY}`}
+          opacity={0.5}
+        />
+        {/* User's current location marker */}
+        <Marker position={[userLocation.lat, userLocation.lng]}>
+          <Popup>
+            <b>Your current location</b>
+            <br />
+            <WeatherTooltip />
+          </Popup>
+        </Marker>
+        {/* Show weather popup at position for extra info */}
+        {weather && weather.icon && (
+          <Marker position={[userLocation.lat, userLocation.lng]} icon={L.divIcon({ className: "", html: `<span style="font-size:1.65em">${weather.icon}</span>`, iconSize: [30, 30], iconAnchor: [15, 35] })}>
+            {/* the marker is visibly replaced by an emoji icon */}
+            <Popup>
+              <WeatherTooltip />
+            </Popup>
+          </Marker>
+        )}
+        {/* Draw polyline for route simulation */}
+        {routePolyline && <Polyline positions={routePolyline} pathOptions={{ color: "#4CAF50", weight: 5, opacity: 0.8 }} />}
+      </MapContainer>
     );
   }
 
@@ -441,14 +460,11 @@ function RouteGuidance({ crimeDataHook, weatherHook: unusedWeatherHook }) {
         </div>
       )}
       {(!userLocation || locationStatus) && <div style={{ color: "#999", marginTop: 8 }}>{locationStatus || "Loading your location & map..."}</div>}
-      {userLocation && mapLoaded && !window.google && (
-        <div style={{ color: "#b44" }}>Error loading Google Maps. Please check your connection or API key.</div>
-      )}
       <div style={{ fontSize: 11, marginTop: 8, color: "#888" }}>
         Map and weather overlays use your current geolocation (centered in India if unavailable).
       </div>
-      <div style={{ fontSize: 10, color: "#b77", marginTop: 2 }}>
-        {/* Google Maps API key in use for this deployment. Weather overlays and panel update via OpenWeatherMap using detected coordinates. */}
+      <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>
+        Powered by <a href="https://openstreetmap.org" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>, <a href="https://openweathermap.org/" target="_blank" rel="noopener noreferrer">OpenWeatherMap</a> & Leaflet
       </div>
     </div>
   );
