@@ -249,7 +249,7 @@ function RouteGuidance({ crimeDataHook, weatherHook }) {
         getTileUrl: function(coord, zoom) {
           // See: https://tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png?appid={API key}
           // For demonstration, we'll use the 'clouds_new' layer
-          return `https://tile.openweathermap.org/map/clouds_new/${zoom}/${coord.x}/${coord.y}.png?appid=YOUR_OPENWEATHERMAP_API_KEY`;
+          return `https://tile.openweathermap.org/map/clouds_new/${zoom}/${coord.x}/${coord.y}.png?appid=285568c9e57ca0da76e2fe74bb901764`;
         },
         tileSize: new window.google.maps.Size(256, 256),
         name: "Weather",
